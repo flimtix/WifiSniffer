@@ -44,20 +44,21 @@ if [[ ! -d "/dev/shm" ]]; then
 fi
 
 # ========== LOGFILE MONITOR (background tail -F) ==========
-# Funktion: Überwacht das echte Logfile und schreibt die letzten TAIL_LINES Zeilen immer aktuell ins RAM-Log
-start_log_monitor() {
-    # Falls schon läuft: stoppen
+# Function: Monitors the real log file and always writes the last TAIL_LINES lines to the RAM log.
+start_log_monitor() 
+{
+    # If already running stop and start new monitor in the background
     pkill -f "tail -F $LOG_FILE" 2>/dev/null
-    # Starte neuen Monitor im Hintergrund
     ( tail -F "$LOG_FILE" 2>/dev/null | stdbuf -oL grep --line-buffered -E "query\[|from " >> "$TMP_RAM_LOG" ) &
     LOG_MON_PID=$!
-    # Nur letzte $TAIL_LINES Zeilen behalten (Memory-Effizienz)
+    # Keep only last $TAIL_LINES lines (memory efficiency)
     ( while sleep 3; do
         tail -n $TAIL_LINES "$TMP_RAM_LOG" > "${TMP_RAM_LOG}.tmp" && mv "${TMP_RAM_LOG}.tmp" "$TMP_RAM_LOG"
     done ) &
     TRIM_PID=$!
 }
-cleanup_monitor() {
+cleanup_monitor() 
+{
     [[ $LOG_MON_PID ]] && kill $LOG_MON_PID 2>/dev/null
     [[ $TRIM_PID ]] && kill $TRIM_PID 2>/dev/null
     rm -f "$TMP_RAM_LOG"
@@ -65,7 +66,8 @@ cleanup_monitor() {
 trap cleanup_monitor EXIT
 
 # ========== TERMINAL SIZE DETECTION ==========
-get_terminal_width() {
+get_terminal_width() 
+{
     local width
     width=$(tput cols 2>/dev/null)
     [[ -z "$width" || "$width" -lt 60 ]] && width=80
@@ -75,7 +77,8 @@ get_terminal_width() {
 # =========================
 # Utility: Get epoch for dnsmasq syslog timestamp
 # =========================
-get_epoch() {
+get_epoch() 
+{
     date --date="$1 $(date +%Y)" +%s 2>/dev/null
 }
 
@@ -83,7 +86,8 @@ get_epoch() {
 # Parse log file for queries in the timeframe, keep in memory (performance: only RAM-log)
 # Out: prints "client_ip|domain|last_seen_epoch|count"
 # =========================
-parse_log() {
+parse_log() 
+{
     local now
     now=$(date +%s)
     awk -v mins="$TIMEFRAME_MINUTES" -v now="$now" '
@@ -121,7 +125,8 @@ parse_log() {
 # =========================
 # UI: Print banner/header
 # =========================
-print_banner() {
+print_banner() 
+{
     local width
     width=$(get_terminal_width)
     printf "${BOLD}${CYAN}%*s${NC}\n" $(( (width + 34) / 2 )) "==========================================="
@@ -132,16 +137,19 @@ print_banner() {
 # =========================
 # UI: Live-Client selection menu
 # =========================
-select_client_live() {
+select_client_live() 
+{
     declare -A CLIENTS
     local sel="" last_displayed=""
     while true; do
         # Parse and show again (from RAM-Logfile)
         CLIENTS=()
         local i=1 parsed_data display clients_found=0
+
         parsed_data=$(parse_log)
         clear
         print_banner
+
         mapfile -t client_lines < <(echo "$parsed_data" | grep "^CLIENT|")
         if [[ ${#client_lines[@]} -eq 0 ]]; then
             echo -e "${RED}No active clients in the last $TIMEFRAME_MINUTES minutes.${NC}"
@@ -152,25 +160,33 @@ select_client_live() {
                 ts=$(echo "$line" | cut -d"|" -f3)
                 echo "$ts|$ip"
             done | sort -rn | cut -d"|" -f2))
+        
             # Print the clients
             for ip in "${sorted[@]}"; do
                 CLIENTS[$i]=$ip
                 printf "${BLUE}%2d)${NC} ${GREEN}%s${NC}\n" "$i" "$ip"
                 ((i++))
             done
+        
             clients_found=1
         fi
+        
         echo -e "${MAGENTA} q) Quit${NC}\n"
+        
         # Only show the client selection if a client is visible
         [[ "$clients_found" -eq 1 ]] && echo -en "${YELLOW}Select client number: ${NC}"
+        
         # Wait for user input and reload the ui of nothing has been entered
         read -t "$REFRESH_INTERVAL" -n 1 sel
+        
         if [[ -n "$sel" ]]; then
             if [[ "$sel" == "q" ]]; then exit 0; fi
+
             if [[ ! "$sel" =~ ^[0-9]+$ ]] || [[ -z "${CLIENTS[$sel]}" ]]; then
                 echo -e "${RED}Invalid selection.${NC}"; sleep 1
                 continue
             fi
+            
             SELECTED_CLIENT="${CLIENTS[$sel]}"
             return 0
         fi
@@ -178,26 +194,33 @@ select_client_live() {
 }
 
 # =========================
-# UI: Show domain table for selected client (width aware!)
+# UI: Show domain table for selected client
 # =========================
-show_client_domains() {
+show_client_domains() 
+{
     local client_ip="$1" width dom_col cnt_col time_col dom ts cnt time_human color
+
+    # Resize the screen so the therminal can be moved
     width=$(get_terminal_width)
     ((dom_col=width-30))
     ((dom_col<20)) && dom_col=20
     cnt_col=8; time_col=10
 
+    # Parse the data in a usable manner
     local parsed_data
     parsed_data=$(parse_log)
     mapfile -t domains < <(echo "$parsed_data" | awk -F'|' -v ip="$client_ip" '
         $1==ip { print $2 "|" $3 "|" $4 }
     ' | sort -t"|" -k2,2nr | head -n $MAX_DOMAINS)
 
+    # Print the headline of the table
     clear
     print_banner
     echo -e "${BOLD}${CYAN}DNS queries for client: ${GREEN}${client_ip}${CYAN} (last $TIMEFRAME_MINUTES min)${NC}\n"
     printf "${BOLD}${WHITE}%-${dom_col}s %-${cnt_col}s %-${time_col}s${NC}\n" "Domain" "Count" "Last Seen"
     printf "${GREY}%s${NC}\n" "$(printf '─%.0s' $(seq 1 $width))"
+
+    # Print the DNS queries in the table
     if [[ ${#domains[@]} -eq 0 ]]; then
         echo -e "${RED}No DNS queries from this client in the last $TIMEFRAME_MINUTES minutes.${NC}"
     else
@@ -205,6 +228,7 @@ show_client_domains() {
             dom=$(echo "$entry" | cut -d"|" -f1)
             ts=$(echo "$entry" | cut -d"|" -f2)
             cnt=$(echo "$entry" | cut -d"|" -f3)
+    
             # Truncate domain if too wide
             [[ ${#dom} -gt $((dom_col-3)) ]] && dom="${dom:0:$((dom_col-3))}..."
             time_human=$(date -d @"$ts" "+%H:%M:%S")
@@ -212,6 +236,7 @@ show_client_domains() {
             printf "${color}%-${dom_col}s${CYAN} %-${cnt_col}s ${GREY}%-${time_col}s${NC}\n" "$dom" "$cnt" "$time_human"
         done
     fi
+    
     echo -e "\n${MAGENTA}[Any key: back to client selection | ${CYAN}Ctrl+C to exit${MAGENTA}]${NC}"
 }
 
